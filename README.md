@@ -15,6 +15,7 @@ blocked, the order tools do not exist and the HTTP client refuses to send any wr
 - [Setup](#setup)
 - [Logging in (OAuth PKCE)](#logging-in-oauth-pkce)
 - [Running the MCP server](#running-the-mcp-server)
+- [Remote access over HTTPS](#remote-access-over-https)
 - [Tools](#tools)
 - [Trading and the hard block](#trading-and-the-hard-block)
 - [How the pieces fit together](#how-the-pieces-fit-together)
@@ -50,6 +51,8 @@ Edit `.env`:
 | `SAXO_REDIRECT_URI`  | Must match the redirect URL registered on the app. Must be `http://localhost:<port>/...`.     |
 | `SAXO_TOKEN_FILE`    | Optional. Where tokens are stored. Default `./.saxo-tokens.json`, created with mode `0600`.   |
 | `SAXO_TRADING`       | `disabled` (default) or `enabled`. Anything else is rejected at startup.                      |
+| `MCP_ACCESS_TOKEN`   | HTTP entry point only. Bearer token clients must send. `openssl rand -hex 32`. Min 32 chars.  |
+| `HTTP_PORT`          | HTTP entry point only. Loopback port, default `3000`.                                         |
 
 `.env` and the token file are listed in `.gitignore`.
 
@@ -139,6 +142,30 @@ Example client configuration (Claude Desktop / Claude Code style):
 The server reads `.env` from its working directory, so set `cwd` (or export the variables in the
 client's `env` block).
 
+## Remote access over HTTPS
+
+A second entry point, `dist/http-server.js`, runs the same tools over the MCP Streamable HTTP
+transport. The stdio entry point is unchanged and both can run side by side.
+
+- Listens on `127.0.0.1:HTTP_PORT` (default 3000) only. It is never internet-facing; Caddy
+  terminates TLS in front of it.
+- Every request must carry `Authorization: Bearer <MCP_ACCESS_TOKEN>` or gets a 401 before any
+  MCP or Saxo code runs. The token is compared in constant time and never logged.
+- Endpoints: `POST/GET/DELETE /mcp` (the MCP session) and `GET /healthz` (unauthenticated
+  liveness probe that returns `ok`).
+- Sessions: each MCP client gets its own session keyed by `Mcp-Session-Id`; all sessions share
+  one token manager, so refreshes never race. Idle sessions are closed after 30 minutes.
+- Requests whose `Host` header is not `localhost`/`127.0.0.1` are rejected (DNS-rebinding
+  hardening). The provided Caddyfile forwards the upstream host, so nothing else is required.
+
+Setup, Caddyfile, pm2 and firewall steps are in [`deploy/README.md`](deploy/README.md), with the
+Caddyfile itself at [`deploy/Caddyfile`](deploy/Caddyfile).
+
+```bash
+npm run build
+MCP_ACCESS_TOKEN=$(openssl rand -hex 32) HTTP_PORT=3000 npm run start:http   # or via pm2, see deploy/
+```
+
 ## Tools
 
 All tools are annotated `readOnlyHint: true` and return JSON.
@@ -209,8 +236,10 @@ Safety features when enabled:
 
 ```
 src/
-  index.ts              stdio entry point
-  server.ts             builds the McpServer and registers the tools
+  index.ts              stdio entry point (unchanged by the HTTP work)
+  http-server.ts        Streamable HTTP entry point: loopback listener, sessions, bearer auth
+  http/auth.ts          constant-time bearer token check
+  server.ts             builds the McpServer and registers the tools; createDeps() is shared
   config.ts             .env loading, SIM/LIVE endpoints, LIVE guard
   login.ts              `npm run login` (interactive PKCE flow)
   whoami.ts             `npm run whoami` (auth sanity check)
@@ -273,7 +302,8 @@ disabled.
 ## Development
 
 ```bash
-npm run dev        # run the server from TypeScript sources
+npm run dev        # run the stdio server from TypeScript sources
+npm run dev:http   # run the HTTP server from TypeScript sources
 npm run typecheck
 npm test           # unit tests + in-process MCP client tests against a fake Saxo
 npm run build

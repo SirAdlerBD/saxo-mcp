@@ -18,7 +18,9 @@
     "login": "tsx src/login.ts",
     "whoami": "tsx src/whoami.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test test/*.test.ts",
+    "start:http": "node dist/http-server.js",
+    "dev:http": "tsx src/http-server.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

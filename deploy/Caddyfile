@@ -1,0 +1,39 @@
+# Caddyfile for saxo-mcp
+# Install to /etc/caddy/Caddyfile. Caddy obtains and renews the Let's Encrypt
+# certificate for the domain automatically (HTTP-01 challenge on port 80,
+# then serves HTTPS on 443).
+
+saxo-mcp.duckdns.org {
+	# Forward everything to the local MCP HTTP server (loopback only).
+	reverse_proxy 127.0.0.1:3000 {
+		# Present the upstream's own host to the app. The app only accepts
+		# localhost/127.0.0.1 Host headers as a DNS-rebinding safeguard.
+		header_up Host {upstream_hostport}
+
+		# MCP uses long-lived SSE streams; do not buffer or time them out.
+		flush_interval -1
+		transport http {
+			read_timeout 0
+			write_timeout 0
+		}
+	}
+
+	# Only the MCP endpoint and the health probe exist upstream; everything
+	# else is answered here without touching the app.
+	@notmcp not path /mcp /mcp/* /healthz
+	respond @notmcp 404
+
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/saxo-mcp.log
+		# Do not log request headers (the Authorization header would end up in the log).
+		format json
+	}
+}
