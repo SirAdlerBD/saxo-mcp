@@ -149,8 +149,12 @@ transport. The stdio entry point is unchanged and both can run side by side.
 
 - Listens on `127.0.0.1:HTTP_PORT` (default 3000) only. It is never internet-facing; Caddy
   terminates TLS in front of it.
-- Every request must carry `Authorization: Bearer <MCP_ACCESS_TOKEN>` or gets a 401 before any
-  MCP or Saxo code runs. The token is compared in constant time and never logged.
+- Every request must present `MCP_ACCESS_TOKEN`, either as `Authorization: Bearer <token>`
+  (primary) or as `?token=<token>` in the URL for MCP clients whose connector UI cannot set
+  headers (for example Claude's custom connectors). Either one being valid is enough; otherwise
+  the request gets a 401 before any MCP or Saxo code runs. Both paths use the same constant-time
+  comparison, the token is never logged, and the query parameter is stripped from the URL right
+  after the check. Over HTTPS the query string is encrypted like the rest of the request.
 - Endpoints: `POST/GET/DELETE /mcp` (the MCP session) and `GET /healthz` (unauthenticated
   liveness probe that returns `ok`).
 - Sessions: each MCP client gets its own session keyed by `Mcp-Session-Id`; all sessions share

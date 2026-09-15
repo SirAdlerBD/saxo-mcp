@@ -6,8 +6,10 @@
  * differs. Differences from src/index.ts:
  *   - Listens on 127.0.0.1:<HTTP_PORT> (default 3000). Loopback only: the
  *     public side is a reverse proxy (Caddy) that terminates TLS.
- *   - Requires "Authorization: Bearer <MCP_ACCESS_TOKEN>" on every request
- *     before any MCP handling (src/http/auth.ts).
+ *   - Requires MCP_ACCESS_TOKEN on every request before any MCP handling,
+ *     as "Authorization: Bearer <token>" or as "?token=<token>" for clients
+ *     that cannot set headers (src/http/auth.ts). The query parameter is
+ *     stripped from the URL right after the check.
  *   - Stateful sessions: each MCP client initialize() gets its own McpServer
  *     + transport, keyed by the Mcp-Session-Id header. All sessions share ONE
  *     set of Saxo deps (token manager, HTTP client) so token refreshes never
@@ -27,7 +29,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { loadConfig, ConfigError, type AppConfig } from "./config.js";
 import { createDeps, createServerWithDeps, type SaxoDeps } from "./server.js";
-import { BearerAuth } from "./http/auth.js";
+import { BearerAuth, stripTokenFromUrl } from "./http/auth.js";
 
 const MCP_PATH = "/mcp";
 const MAX_BODY_BYTES = 1_000_000;
@@ -174,11 +176,15 @@ export async function startHttpServer(config: AppConfig, opts: HttpServerOptions
       return;
     }
 
-    // 2. Bearer token, before anything touches MCP or Saxo. Never log the header.
+    // 2. Access token (header or ?token= query), before anything touches MCP or
+    //    Saxo. Never log the header or the query string.
     if (!auth.guard(req, res)) {
       log(`401 ${req.method} ${path}`);
       return;
     }
+    // The token has done its job; make sure no downstream code (transport,
+    // error paths, future logging) ever sees it in the URL.
+    req.url = stripTokenFromUrl(req.url);
 
     if (path !== MCP_PATH) {
       sendJson(res, 404, { error: "not_found", message: `Use ${MCP_PATH}` });

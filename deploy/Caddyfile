@@ -33,7 +33,15 @@ saxo-mcp.duckdns.org {
 
 	log {
 		output file /var/log/caddy/saxo-mcp.log
-		# Do not log request headers (the Authorization header would end up in the log).
-		format json
+		# The access token may arrive as ?token=... for clients that cannot set
+		# headers. Redact it (and the Authorization header, which Caddy already
+		# redacts by default unless log_credentials is enabled) before writing.
+		format filter {
+			wrap json
+			request>uri query {
+				delete token
+			}
+			request>headers>Authorization delete
+		}
 	}
 }
