@@ -1,6 +1,17 @@
 /**
- * Builds the MCP server with all read-only tools registered.
- * Separated from index.ts so tests can construct a server with a fake fetch.
+ * Builds the MCP server with all tools registered.
+ *
+ * Two layers:
+ *   - createDeps(): the Saxo side (token manager, HTTP client, APIs). This is
+ *     process-wide state. There must be exactly ONE TokenManager per process,
+ *     because every refresh invalidates the previous refresh token; two
+ *     managers refreshing independently would lock each other out.
+ *   - createServerWithDeps(): an McpServer wired to those deps. An McpServer
+ *     can only be connected to one transport, so the HTTP entry point builds
+ *     one per session while sharing a single set of deps.
+ *
+ * createServer() keeps the original one-call signature used by the stdio
+ * entry point (src/index.ts), which is unchanged.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AppConfig } from "./config.js";
@@ -14,13 +25,32 @@ import { registerMarketDataTools } from "./tools/marketdata.js";
 import { TradingApi } from "./saxo/trading.js";
 import { registerTradingTools } from "./tools/trading.js";
 
-export function createServer(config: AppConfig, fetchImpl: typeof fetch = fetch): McpServer {
+export interface SaxoDeps {
+  tokens: TokenManager;
+  client: SaxoClient;
+  portfolio: PortfolioApi;
+  marketData: MarketDataApi;
+  trading: TradingApi;
+}
+
+export function createDeps(config: AppConfig, fetchImpl: typeof fetch = fetch): SaxoDeps {
   const tokens = new TokenManager(config, new TokenStore(config.tokenFile), fetchImpl);
   const client = new SaxoClient(config, tokens, fetchImpl);
-  const portfolio = new PortfolioApi(client);
-  const marketData = new MarketDataApi(client);
+  return {
+    tokens,
+    client,
+    portfolio: new PortfolioApi(client),
+    marketData: new MarketDataApi(client),
+    trading: new TradingApi(client),
+  };
+}
 
-  const trading = new TradingApi(client);
+export function createServer(config: AppConfig, fetchImpl: typeof fetch = fetch): McpServer {
+  return createServerWithDeps(config, createDeps(config, fetchImpl));
+}
+
+export function createServerWithDeps(config: AppConfig, deps: SaxoDeps): McpServer {
+  const { portfolio, marketData, trading } = deps;
 
   const tradingNote = config.tradingEnabled
     ? "TRADING IS ENABLED: precheck_order, place_order, modify_order and cancel_order are available. " +
