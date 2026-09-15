@@ -64,7 +64,7 @@ curl -s -X POST https://saxo-mcp.duckdns.org/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
 ```
 
-MCP client configuration:
+MCP client configuration (clients that support custom headers):
 
 ```json
 {
@@ -77,3 +77,14 @@ MCP client configuration:
   }
 }
 ```
+
+Clients with no custom-header field (Claude custom connectors: choose "no authentication"):
+
+```
+https://saxo-mcp.duckdns.org/mcp?token=<MCP_ACCESS_TOKEN>
+```
+
+The Caddyfile's log filter deletes the `token` query parameter and the `Authorization` header
+before writing the access log, so neither ends up in `/var/log/caddy/saxo-mcp.log`. If you
+customise logging, keep that filter. Rotate the token (edit `.env`, `pm2 restart saxo-mcp-http`,
+update the connector) if you ever paste the URL somewhere it should not be.
