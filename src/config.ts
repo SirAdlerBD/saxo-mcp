@@ -7,6 +7,10 @@
  *
  * LIVE is deliberately hard to enable: SAXO_ENV=live is refused unless
  * SAXO_ALLOW_LIVE=1 is also set. During development you should never need it.
+ *
+ * Trading is hard-blocked by default. Only the literal value
+ * SAXO_TRADING=enabled turns it on; anything else (unset, "0", "false",
+ * "on", "yes"...) keeps it off, so a typo can never enable it.
  */
 import { config as loadDotenv } from "dotenv";
 import path from "node:path";
@@ -41,6 +45,8 @@ export interface AppConfig {
   appKey: string;
   redirectUri: string;
   tokenFile: string;
+  /** True only when SAXO_TRADING=enabled. Controls tool registration AND the HTTP client. */
+  tradingEnabled: boolean;
 }
 
 export class ConfigError extends Error {}
@@ -87,5 +93,11 @@ export function loadConfig(overrides: Partial<Record<string, string>> = {}): App
 
   const tokenFile = path.resolve(get("SAXO_TOKEN_FILE") ?? ".saxo-tokens.json");
 
-  return { env, endpoints: ENDPOINTS[env], appKey, redirectUri, tokenFile };
+  const tradingRaw = (get("SAXO_TRADING") ?? "disabled").trim().toLowerCase();
+  if (tradingRaw !== "enabled" && tradingRaw !== "disabled") {
+    throw new ConfigError(`SAXO_TRADING must be "enabled" or "disabled" (default), got "${tradingRaw}".`);
+  }
+  const tradingEnabled = tradingRaw === "enabled";
+
+  return { env, endpoints: ENDPOINTS[env], appKey, redirectUri, tokenFile, tradingEnabled };
 }

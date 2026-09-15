@@ -10,7 +10,7 @@
 import type { CallToolResult, ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { AuthRequiredError } from "../auth/tokenManager.js";
-import { ReadOnlyViolationError, SaxoApiError } from "../saxo/client.js";
+import { ReadOnlyViolationError, SaxoApiError, TradingDisabledError } from "../saxo/client.js";
 
 /** Advertise to MCP clients that these tools never modify anything. */
 export const READ_ONLY_ANNOTATIONS: ToolAnnotations = {
@@ -33,7 +33,7 @@ export function errorResult(err: unknown): CallToolResult {
     if (err.details && typeof err.details === "object") {
       text += `\nDetails: ${JSON.stringify(err.details).slice(0, 800)}`;
     }
-  } else if (err instanceof ReadOnlyViolationError) {
+  } else if (err instanceof TradingDisabledError || err instanceof ReadOnlyViolationError) {
     text = err.message;
   } else if (err instanceof Error) {
     text = `Error: ${err.message}`;

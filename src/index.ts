@@ -14,7 +14,15 @@ async function main(): Promise<void> {
   const server = createServer(config);
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error(`[saxo-mcp] ready (env=${config.env}, tokens=${config.tokenFile})`);
+  console.error(
+    `[saxo-mcp] ready (env=${config.env}, trading=${config.tradingEnabled ? "ENABLED" : "disabled"}, tokens=${config.tokenFile})`
+  );
+  if (config.tradingEnabled) {
+    console.error(
+      `[saxo-mcp] WARNING: trading tools are enabled on the ${config.env.toUpperCase()} environment. ` +
+        "Orders placed through this server are real for that environment. Set SAXO_TRADING=disabled to hard-block."
+    );
+  }
 }
 
 main().catch((err: unknown) => {

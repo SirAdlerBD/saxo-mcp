@@ -8,8 +8,9 @@ export async function tmpDir(): Promise<string> {
   return fs.mkdtemp(path.join(os.tmpdir(), "saxo-mcp-test-"));
 }
 
-export function testConfig(tokenFile: string): AppConfig {
+export function testConfig(tokenFile: string, tradingEnabled = false): AppConfig {
   return {
+    tradingEnabled,
     env: "sim",
     endpoints: { authBase: "https://auth.test", apiBase: "https://api.test/sim/openapi" },
     appKey: "test-app-key",

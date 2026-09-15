@@ -1,13 +1,13 @@
 # saxo-mcp
 
-A minimal, **read-only** [Model Context Protocol](https://modelcontextprotocol.io) server for the
+A minimal [Model Context Protocol](https://modelcontextprotocol.io) server for the
 [Saxo Bank OpenAPI](https://www.developer.saxo/openapi/learn). It lets an AI assistant answer
 questions about your portfolio (accounts, balances, positions, open orders, history) and look up
 market data (instrument search, contract details, quotes, historical bars).
 
-It cannot trade. There is no code path that places, modifies or cancels an order, and the HTTP
-client refuses to build a request for anything outside Saxo's read endpoints (see
-[Read-only guarantees](#read-only-guarantees)).
+**Read-only by default.** Trading is hard-blocked unless you set `SAXO_TRADING=enabled`. While
+blocked, the order tools do not exist and the HTTP client refuses to send any write request (see
+[Trading and the hard block](#trading-and-the-hard-block)).
 
 ## Contents
 
@@ -16,6 +16,7 @@ client refuses to build a request for anything outside Saxo's read endpoints (se
 - [Logging in (OAuth PKCE)](#logging-in-oauth-pkce)
 - [Running the MCP server](#running-the-mcp-server)
 - [Tools](#tools)
+- [Trading and the hard block](#trading-and-the-hard-block)
 - [How the pieces fit together](#how-the-pieces-fit-together)
 - [Read-only guarantees](#read-only-guarantees)
 - [Security notes](#security-notes)
@@ -28,7 +29,7 @@ client refuses to build a request for anything outside Saxo's read endpoints (se
   <https://www.developer.saxo/openapi/appmanagement>:
   - Grant type: **Authorization Code Grant (PKCE)**.
   - Redirect URL: `http://localhost:8765/callback` (any localhost port works; keep `.env` in sync).
-  - Trading permission: **disabled**. This server never needs it.
+  - Trading permission: **disabled** unless you intend to use the trading tools (see below).
   - Environment: **Simulation** while developing.
 
 ## Setup
@@ -48,6 +49,7 @@ Edit `.env`:
 | `SAXO_ENV`           | `sim` (default). `live` is refused unless `SAXO_ALLOW_LIVE=1` is also set.                    |
 | `SAXO_REDIRECT_URI`  | Must match the redirect URL registered on the app. Must be `http://localhost:<port>/...`.     |
 | `SAXO_TOKEN_FILE`    | Optional. Where tokens are stored. Default `./.saxo-tokens.json`, created with mode `0600`.   |
+| `SAXO_TRADING`       | `disabled` (default) or `enabled`. Anything else is rejected at startup.                      |
 
 `.env` and the token file are listed in `.gitignore`.
 
@@ -164,6 +166,45 @@ Market data (need a UIC from `search_instruments`):
 Optional parameters shared by the portfolio tools: `accountKey` (defaults to the client's default
 account) and `wholeClient: true` (aggregate over all accounts).
 
+Trading (only registered when `SAXO_TRADING=enabled`):
+
+| Tool             | What it does                                                                            | Saxo endpoint                          |
+| ---------------- | --------------------------------------------------------------------------------------- | -------------------------------------- |
+| `precheck_order` | Dry run: validation, estimated costs and margin impact. Places nothing.                  | `POST /trade/v2/orders/precheck`       |
+| `place_order`    | Places a Market/Limit/Stop/StopLimit/TrailingStop order. Requires `confirm: true`.       | `POST /trade/v2/orders`                |
+| `modify_order`   | Replaces amount/price/type/duration of an open order. Requires `confirm: true`.          | `PATCH /trade/v2/orders`               |
+| `cancel_order`   | Cancels an open order by `OrderId`. Requires `confirm: true`.                            | `DELETE /trade/v2/orders/{OrderId}`    |
+
+`get_account_summary` reports whether trading is enabled so the assistant can tell the user.
+
+## Trading and the hard block
+
+Trading is off unless `.env` contains exactly `SAXO_TRADING=enabled`. The block is enforced in
+three independent places, so no single mistake can open it:
+
+1. **Config.** Only the literal value `enabled` sets `tradingEnabled`. `1`, `true`, `on`, `yes`
+   and typos are rejected at startup with a configuration error.
+2. **Tool registration.** With trading disabled, `precheck_order`, `place_order`, `modify_order`
+   and `cancel_order` are never registered. An MCP client cannot see or call them.
+3. **HTTP client.** `SaxoClient.post/patch/delete` re-check the switch on every call and throw
+   `TradingDisabledError` before any network I/O. Even when enabled, writes are limited to
+   `/trade/v2/orders`, `/trade/v2/orders/precheck` and `/trade/v2/orders/{OrderId}`. Nothing
+   else in the API can be written.
+
+To enable: set `SAXO_TRADING=enabled`, make sure the Saxo app itself has trading permission, and
+restart the server. It logs a warning on stderr at startup. To disable again: set it back to
+`disabled` (or remove the line) and restart. Restart is required; the switch is read once.
+
+Safety features when enabled:
+
+- `place_order`, `modify_order` and `cancel_order` require `confirm: true`, and their descriptions
+  instruct the assistant to obtain explicit user confirmation of every parameter first.
+- `precheck_order` gives costs and margin impact without placing anything.
+- Every write sends a fresh `X-Request-ID`, which Saxo uses to de-duplicate accidental resubmits.
+- Orders are sent with `ManualOrder: true`, meaning a human made the decision.
+- Combine with `SAXO_ENV=sim` while testing. Trading on LIVE requires both
+  `SAXO_ALLOW_LIVE=1` and `SAXO_TRADING=enabled`.
+
 ## How the pieces fit together
 
 ```
@@ -180,13 +221,15 @@ src/
     tokenStore.ts       0600 JSON token file, atomic writes
     tokenManager.ts     hands out a valid access token, refreshes before expiry
   saxo/
-    client.ts           GET-only HTTP client with the read-only path guard and 401 handling
+    client.ts           HTTP client: read-only path guard, 401 handling, trading hard block
     portfolio.ts        typed wrappers for the portfolio / history / report endpoints
     marketdata.ts       typed wrappers for reference data, quotes and charts
+    trading.ts          order precheck / place / modify / cancel (gated)
   tools/
     shared.ts           result/error formatting, common zod parameters
     portfolio.ts        the six portfolio tools
     marketdata.ts       the four market data tools
+    trading.ts          the four trading tools (registered only when enabled)
 ```
 
 Request flow for a tool call: tool handler -> `PortfolioApi`/`MarketDataApi` -> `SaxoClient.get`
@@ -196,7 +239,10 @@ refresh, becomes an `AUTHENTICATION REQUIRED` tool error that tells the user to 
 
 ## Read-only guarantees
 
-- `SaxoClient` has no method parameter. It can only send `GET`.
+These apply to the ten portfolio and market data tools, and to the whole server while trading is
+disabled.
+
+- `SaxoClient.get` has no method parameter. It can only send `GET`.
 - Every path is checked by `assertReadOnlyPath` before a URL is built. Allowed: `/port/`, `/ref/`,
   `/chart/`, `/hist/`, `/cs/v1/reports/`, `/cs/v1/audit/`, `/root/v1/sessions/`, plus the exact
   path `/trade/v1/infoprices` (and `/list`). Everything else under `/trade/` and any
@@ -207,9 +253,11 @@ refresh, becomes an `AUTHENTICATION REQUIRED` tool error that tells the user to 
   `/trade/` service group at all, remove the two entries from `READ_ONLY_EXACT` in
   `src/saxo/client.ts` and the price tool will fail closed; `get_chart_data` with `horizon: 1`
   still gives the latest one-minute bar.
-- Register the Saxo app with trading permission disabled so the token itself cannot trade either.
-- The test suite asserts that every request made by every tool is a `GET` and that no path other
-  than `/trade/v1/infoprices` under `/trade/` is ever requested.
+- If you never intend to trade, register the Saxo app with trading permission disabled so the
+  token itself cannot trade either.
+- The test suite asserts that every request made by the read tools is a `GET`, that no path other
+  than `/trade/v1/infoprices` under `/trade/` is requested by them, and that with trading disabled
+  no write request leaves the process even when the client is called directly.
 
 ## Security notes
 
@@ -232,5 +280,5 @@ npm run build
 ```
 
 The tests do not contact Saxo. They cover the PKCE math (RFC 7636 test vector), token storage
-permissions, refresh handling, the read-only guard and every tool end to end via an in-memory MCP
-transport.
+permissions, refresh handling, the read-only guard, the trading hard block in both states, and every
+tool end to end via an in-memory MCP transport.

@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { PortfolioApi } from "../saxo/portfolio.js";
 import { READ_ONLY_ANNOTATIONS, accountKeyParam, defaultRange, isoDate, run, wholeClientParam } from "./shared.js";
 
-export function registerPortfolioTools(server: McpServer, api: PortfolioApi): void {
+export function registerPortfolioTools(server: McpServer, api: PortfolioApi, tradingEnabled = false): void {
   server.registerTool(
     "get_account_summary",
     {
@@ -22,6 +22,9 @@ export function registerPortfolioTools(server: McpServer, api: PortfolioApi): vo
         const [user, client, accounts] = await Promise.all([api.user(), api.clientInfo(), api.accounts()]);
         return {
           environment: "Values come from the environment configured in SAXO_ENV (sim during development).",
+          trading: tradingEnabled
+            ? "ENABLED (SAXO_TRADING=enabled): order tools are available and act on this account."
+            : "DISABLED (hard block): this server cannot place, modify or cancel orders.",
           user,
           client,
           accounts: accounts.Data,
