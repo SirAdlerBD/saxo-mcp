@@ -76,6 +76,32 @@ export class TokenManager {
     return (await this.refresh()).accessToken;
   }
 
+  /**
+   * Re-read the token file and replace the in-memory copy if it changed.
+   *
+   * Used by the HTTP server's file watcher so a fresh `npm run login` takes
+   * effect without a restart. Safe against the manager's own refresh cycle:
+   *   - waits for any in-flight refresh to finish first (and re-checks after
+   *     reading, in case one started during the read), so a reload can never
+   *     be overwritten by a refresh that began earlier;
+   *   - a file whose refresh token equals the cached one is the manager's own
+   *     write and is ignored, so self-triggered watch events are no-ops.
+   * Returns true when new tokens were adopted.
+   */
+  async reload(): Promise<boolean> {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (this.refreshing) await this.refreshing.catch(() => undefined);
+      const fresh = await this.store.read();
+      if (this.refreshing) continue; // a refresh started while we were reading; go again
+      if (!fresh) return false; // file missing or corrupt: keep what we have, next call will report clearly
+      if (fresh.env !== this.config.env) return false;
+      if (this.cached && fresh.refreshToken === this.cached.refreshToken) return false;
+      this.cached = fresh;
+      return true;
+    }
+    return false;
+  }
+
   private async load(): Promise<StoredTokens> {
     if (this.cached) return this.cached;
     const tokens = await this.store.read();

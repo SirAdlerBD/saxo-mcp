@@ -53,7 +53,7 @@ async function main(): Promise<void> {
   // Start listening BEFORE showing the URL so the redirect can never race us.
   const callback = waitForCallback({ redirectUri: config.redirectUri, expectedState: state });
 
-  console.error("\nOpen this URL in a browser and log in with your Saxo SIM credentials:\n");
+  console.error(`\nOpen this URL in a browser and log in with your Saxo ${config.env.toUpperCase()} credentials:\n`);
   console.error(`  ${authorizeUrl}\n`);
   console.error("Waiting for the redirect back to the local callback server (5 minute timeout)...");
   if (!process.env.SAXO_NO_BROWSER) tryOpenBrowser(authorizeUrl);
