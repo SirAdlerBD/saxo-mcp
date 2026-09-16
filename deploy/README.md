@@ -42,6 +42,11 @@ pm2 logs saxo-mcp-http
 
 The existing `saxo-mcp` (stdio) process is untouched.
 
+The HTTP process keeps the Saxo session alive on its own (a `[keep-alive]` line every 15 minutes
+in `pm2 logs saxo-mcp-http`). If it ever logs `[keep-alive] WARNING ... run npm run login`, run
+`npm run login` in the project directory; the running server adopts the new token file within a
+second, so no `pm2 restart` is needed for that.
+
 ## 4. Firewall
 
 ```bash

@@ -114,9 +114,9 @@ Saxo specifics worth knowing:
 - Every refresh returns a new refresh token and invalidates the old one. The token file is
   rewritten atomically on each refresh.
 - Access tokens are short-lived (about 20 minutes); refresh tokens live longer (about an hour).
-  As long as the server is used at least once per refresh-token lifetime, it keeps itself logged
-  in. After a long idle period the refresh token expires and tools return
-  `AUTHENTICATION REQUIRED ... run npm run login`.
+  The HTTP server keeps itself logged in with a 15-minute keep-alive. The stdio server only
+  refreshes when a tool is called, so after a long idle period its refresh token expires and
+  tools return `AUTHENTICATION REQUIRED ... run npm run login`.
 
 ## Running the MCP server
 
@@ -161,6 +161,13 @@ transport. The stdio entry point is unchanged and both can run side by side.
   one token manager, so refreshes never race. Idle sessions are closed after 30 minutes.
 - Requests whose `Host` header is not `localhost`/`127.0.0.1` are rejected (DNS-rebinding
   hardening). The provided Caddyfile forwards the upstream host, so nothing else is required.
+- Keep-alive: once at startup and every 15 minutes it makes one lightweight authenticated call
+  (`GET /port/v1/users/me`) purely so the token manager refreshes before expiry. Saxo's refresh
+  token lapses after about an hour without use, so this is what survives an idle night. Success
+  logs one line; failure logs a warning naming `npm run login` and never crashes the process.
+- Hot reload: the token file's directory is watched. Running `npm run login` while the server is
+  up is picked up within a second, no restart needed. The stdio entry point has neither feature;
+  it is not the process running unattended.
 
 Setup, Caddyfile, pm2 and firewall steps are in [`deploy/README.md`](deploy/README.md), with the
 Caddyfile itself at [`deploy/Caddyfile`](deploy/Caddyfile).
